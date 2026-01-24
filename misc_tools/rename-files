@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+import re
+import sys
+
+from dataclasses import dataclass
+from enum import Enum, StrEnum
+from itertools import chain
+from pathlib import Path
+from typing import Collection, Final
+
+
+@dataclass
+class Arguments:
+    space_char: str
+    files: Collection[Path]
+    directories: Collection[Path]
+    action: Action
+    debug: bool
+    color: bool
+
+
+class Action(StrEnum):
+    DO = "do"
+    DRY_RUN = "dry-run"
+
+
+def parse_args(argv: list[str]) -> Arguments:
+    from argparse import ArgumentParser
+
+    parser = ArgumentParser(
+        description="Sanitize the given file name",
+    )
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--no-color", action="store_true")
+    parser.add_argument(
+        "-s",
+        "--space-char",
+        type=str,
+        default="_",
+        help="The space replacement character",
+    )
+    parser.add_argument(
+        "-f", "--file", type=Path, action="append", help="rename given file"
+    )
+    parser.add_argument(
+        "-d",
+        "--directory",
+        type=Path,
+        action="append",
+        help="renamme all files in given directory",
+    )
+    parser.add_argument(
+        "action",
+        choices=[action.value for action in Action],
+        default=Action.DRY_RUN.value,
+        nargs="?",
+    )
+
+    parsed = parser.parse_args(argv)
+
+    return Arguments(
+        space_char=parsed.space_char,
+        files=parsed.file or (),
+        directories=parsed.directory or (),
+        action=Action(parsed.action),
+        debug=parsed.debug,
+        color=not parsed.no_color,
+    )
+
+
+def main() -> None:
+    args = parse_args(sys.argv[1:])
+    green = Color.GREEN.colorize if args.color else lambda s: s
+    yellow = Color.YELLOW.colorize if args.color else lambda s: s
+    blue = Color.BLUE.colorize if args.color else lambda s: s
+    sanitizer = Sanitizer(args.space_char)
+    files = (
+        chain(
+            args.files,
+            (file for directory in args.directories for file in directory.iterdir()),
+        )
+        if args.files or args.directories
+        else Path(".").iterdir()
+    )
+
+    for file in files:
+        sanitized = sanitizer.sanitize_file(file)
+
+        if file.name == sanitized.name:
+            if args.debug:
+                print(file.name, "-->>   nothing to do")
+            continue
+
+        print(green(str(file)), yellow("  -->>  "), blue(str(sanitized)))
+        if args.action == Action.DO:
+            file.move(sanitized)
+
+
+class Sanitizer:
+    strip_chars: Final = " ._-"
+
+    def __init__(self, space_char) -> None:
+        self.space_char: Final = space_char
+        self.patterns: Final = (
+            (re.compile(r"^\[\s*[a-zA-Z0-9]+\.\w+\s*]"), ""),
+            (re.compile(r"[=!]"), ""),
+            (re.compile(r"\s+"), self.space_char),
+            (re.compile(r"[\][()%]"), self.space_char),
+            (re.compile(r"\.{2,}"), "."),
+            (re.compile(r"\.?-\."), "-"),
+            (re.compile(r"[._-]"), self.space_char),
+            (
+                re.compile(f"{self.space_char if self.space_char != '.' else r'\.'}+"),
+                self.space_char,
+            ),
+        )
+
+    def sanitize_file(self, file: Path) -> Path:
+        return file.with_name(self.sanitize_name(file.stem) + file.suffix)
+
+    def sanitize_name(self, name: str) -> str:
+        name = name.strip(self.strip_chars)
+        for reg, repl in self.patterns:
+            name = reg.sub(repl, name)
+
+        return name.replace("'", "’").strip(self.strip_chars).lower()
+
+
+class Color(Enum):
+    RESET = "\033[00m"
+
+    BLACK = "\033[30m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+
+    def colorize(self, string: str) -> str:
+        return f"{self.value}{string}{Color.RESET.value}"
+
+
+if __name__ == "__main__":
+    main()
