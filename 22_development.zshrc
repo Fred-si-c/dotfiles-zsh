@@ -36,8 +36,8 @@ alias su='snapshot-update'
 alias ms='mypy --follow-import=silent'
 
 # Docker
-alias dr='docker run'
-alias di='docker run -it'
+alias dr='docker run -it'
+alias dv='docker run -it -v "$(pwd):/app" -w /app'
 
 alias dc='docker compose'
 alias dcu='dc up -d'
